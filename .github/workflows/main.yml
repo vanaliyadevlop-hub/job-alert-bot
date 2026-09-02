@@ -1,0 +1,50 @@
+name: Hourly Gujarat Job Digest
+
+on:
+  schedule:
+    # top of every hour, UTC. GitHub Actions cron can lag a few minutes
+    # under load -- that's normal, not a bug.
+    - cron: '0 * * * *'
+  workflow_dispatch: {}   # adds a "Run workflow" button in the Actions tab for manual testing
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gujarat-job-digest
+  cancel-in-progress: false   # let an in-flight run finish rather than clobber its git push
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+        # No `scrapling install` step here on purpose: that downloads full
+        # browser binaries, which we don't need. This project only uses
+        # Scrapling's plain `Fetcher` (HTTP + TLS impersonation), not the
+        # browser-based StealthyFetcher/DynamicFetcher classes -- confirmed
+        # by testing Fetcher.get() with no browser installed at all.
+
+      - name: Run scraper
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python scraper.py
+
+      - name: Commit updated digest + memory back to the repo
+        run: |
+          git config user.name "gujarat-job-digest-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/seen_jobs.json data/scrapling_elements.db docs/index.html
+          git diff --staged --quiet || git commit -m "Digest update: $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git pull --rebase
+          git push
